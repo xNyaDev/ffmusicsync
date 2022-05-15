@@ -1,0 +1,21 @@
+[package]
+name = "ffmusicsync"
+version = "1.0.0"
+edition = "2021"
+authors = ["xNyaDev <xnyadev@pm.me>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/xNyaDev/ffmusicsync/"
+homepage = "https://github.com/xNyaDev/ffmusicsync/"
+description = "A simple utility which creates an encoded music folder out of your library and keeps it updated using as least ffmpeg runs as possible."
+categories = ["command-line-utilities", "multimedia::audio"]
+keywords = ["ffmpeg", "music-library", "wrapper"]
+
+[dependencies]
+clap = { version = "3.1.8", features = ["derive"] }
+console = "0.15.0"
+dialoguer = "0.10.0"
+json_comments = "0.2.1"
+lazy_static = "1.4.0"
+regex = "1.5.5"
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = "1.0.79"
