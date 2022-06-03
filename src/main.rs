@@ -13,7 +13,10 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde::Deserialize;
 
+use crate::ogg_cover::copy_pictures;
+
 mod tests;
+mod ogg_cover;
 
 /// A simple utility which creates an encoded music folder out of your library and keeps it updated
 /// using as least ffmpeg runs as possible.
@@ -277,6 +280,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     command.status().expect("Failed to execute ffmpeg");
                 }
+                if config.copy_covers == Some(true) {
+                    println!("Copying audio cover");
+                    copy_pictures(input_file_path, output_file_path)?;
+                }
             }
         } else {
             println!("Copying {} to {}", input_file_name, output_file_name);
@@ -392,6 +399,7 @@ struct Config {
     pub output_directory: String,
     pub extensions_to_encode: Vec<String>,
     pub encoded_extension: String,
+    pub copy_covers: Option<bool>,
     pub ffmpeg_params: String,
     pub remove_round_brackets: Option<bool>,
     pub remove_square_brackets: Option<bool>,

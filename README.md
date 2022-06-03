@@ -11,11 +11,14 @@ runs as possible.
 - Keep the folder updated with subsequent runs - you can remove and add songs to the original one
 - Remove brackets from the filenames - no more `(Original Mix)` in every single name, customizable
 - Lots of file formats supported - acts as a ffmpeg wrapper, supports everything ffmpeg does
-- Keep a list of the encoded files so even if you change the rename settings it won't need to re-encode them
+- Keep a list of the encoded files so even if you change the renaming settings it won't need to re-encode them
+- Copy covers to files post-encode*
+
+*See the [lofty crate](https://docs.rs/lofty/0.6.3/lofty/index.html#supported-formats) for a list of supported formats 
+to copy from/to
 
 ## Limitations
 - Recursive directories currently not supported - the input directory can contain only files
-- OGG covers not supported - ffmpeg limitation. Use `-vn` when encoding to OGG otherwise the files will be unplayable
 
 ## Configuration examples
 `config.json` can contain comments, so you can just copy-paste the example.
@@ -32,6 +35,10 @@ runs as possible.
   ],
   // A string containing the extension for encoded files
   "encodedExtension": "ogg",
+  // Add covers to files after encoding them
+  // ffmpeg can't do that by itself for OGG files
+  // The option doesn't need to be present, defaults to false
+  "copyCovers": true,
   // A string containing the ffmpeg params
   // ffmpeg command looks like:
   // ffmpeg -i <INPUT> <PARAMS> <OUTPUT>
@@ -60,9 +67,8 @@ runs as possible.
 - `-V`, `--version` - Print version information
 - `-y`, `--yes` - Always assume "yes" as the answer to all prompts and run non-interactively
 
-## Planned featuresS
+## Planned features
 - Recursive directory support
-- OGG cover support
 - Support of files on an [rclone](https://rclone.org/) remote instead of the local filesystem
 - [ViSQOL](https://github.com/google/visqol) support for automatic bitrate mode
 
