@@ -4,10 +4,12 @@ use super::*;
 #[test]
 fn destination_file_names() {
     let config = Config {
-        input_directory: "".to_string(),
-        output_directory: "".to_string(),
+        input_directory: RclonePath::Local("".to_string()),
+        output_directory: RclonePath::Local("".to_string()),
+        temp_directory: None,
         extensions_to_encode: vec!["flac".to_string()],
         encoded_extension: "ogg".to_string(),
+        copy_covers: None,
         ffmpeg_params: "".to_string(),
         remove_round_brackets: Some(false),
         remove_square_brackets: Some(true),
@@ -28,10 +30,12 @@ fn destination_file_names() {
     );
 
     let config = Config {
-        input_directory: "".to_string(),
-        output_directory: "".to_string(),
+        input_directory: RclonePath::Local("".to_string()),
+        output_directory: RclonePath::Local("".to_string()),
+        temp_directory: None,
         extensions_to_encode: vec!["flac".to_string()],
         encoded_extension: "ogg".to_string(),
+        copy_covers: None,
         ffmpeg_params: "".to_string(),
         remove_round_brackets: Some(true),
         remove_square_brackets: Some(true),
@@ -42,6 +46,12 @@ fn destination_file_names() {
     let input = "Test - Song (Original Mix) [2022] <Test> {}.mp3".to_string();
     assert_eq!(
         "Test - Song.mp3".to_string(),
+        create_output_file_name(input, &config)
+    );
+
+    let input = "Some/Folder/()/Test - Song (Original Mix) [2022] <Test> {}.mp3".to_string();
+    assert_eq!(
+        "Some/Folder/()/Test - Song.mp3".to_string(),
         create_output_file_name(input, &config)
     );
 }

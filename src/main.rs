@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::Parser;
@@ -11,12 +10,15 @@ use dialoguer::Confirm;
 use json_comments::StripComments;
 use lazy_static::lazy_static;
 use regex::Regex;
-use serde::Deserialize;
 
+use crate::config::Config;
+use crate::fs_wrapper::RclonePath;
 use crate::ogg_cover::copy_pictures;
 
+mod config;
 mod tests;
 mod ogg_cover;
+mod fs_wrapper;
 
 /// A simple utility which creates an encoded music folder out of your library and keeps it updated
 /// using as least ffmpeg runs as possible.
@@ -77,6 +79,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_reader_no_comments = StripComments::new(config_reader);
     let config: Config = serde_json::from_reader(config_reader_no_comments)?;
 
+    // Fail if rclone is not found and should be used
+    if config.input_directory.is_remote() || config.output_directory.is_remote() {
+        let rclone_test = Command::new("rclone").arg("version").output();
+        if rclone_test.is_err() {
+            eprintln!("{}", bold_red.apply_to("rclone not found"));
+            std::process::exit(1);
+        }
+    }
+
     // Read already processed songs
     let mut encoded: HashMap<String, String> = if let Ok(encoded_file) = File::open(&args.encoded) {
         let encoded_reader = BufReader::new(encoded_file);
@@ -87,11 +98,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Read songs that are present in the filesystem already
-    let input = fs::read_dir(&config.input_directory)?
-        .map(|file| file.unwrap().file_name().to_str().unwrap().to_string())
+    let input = fs_wrapper::list_files_recursively(&config.input_directory)
+        .into_iter()
+        .map(|file| {
+            Path::new(&file.path_string())
+                .strip_prefix(config.input_directory.clone().path_string()).unwrap()
+                .to_string_lossy().to_string()
+        })
         .collect::<HashSet<String>>();
-    let output = fs::read_dir(&config.output_directory)?
-        .map(|file| file.unwrap().file_name().to_str().unwrap().to_string())
+    let output = fs_wrapper::list_files_recursively(&config.output_directory)
+        .into_iter()
+        .map(|file| {
+            Path::new(&file.path_string())
+                .strip_prefix(config.output_directory.clone().path_string()).unwrap()
+                .to_string_lossy().to_string()
+        })
         .collect::<HashSet<String>>();
 
     // Check for name collisions
@@ -225,6 +246,64 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Create required directories
+    let output_directories = input_to_process.clone().into_iter()
+        .map(
+            |path| {
+                Path::new(&path).parent().unwrap_or(Path::new("")).to_string_lossy().to_string()
+            }
+        ).collect::<HashSet<String>>();
+
+    let temp_directory = config.temp_directory.clone().unwrap_or(String::from("temp"));
+    if config.input_directory.is_remote() || config.output_directory.is_remote() {
+        if args.dry_run {
+            eprintln!("Skipping creation of temp directory as --dry-run is set");
+        } else {
+            println!("Creating directory {}", temp_directory);
+            fs_wrapper::create_dir_all(
+                &RclonePath::Local(temp_directory.clone())
+            )?;
+            for output_directory in output_directories.clone() {
+                println!("Creating directory {}", output_directory);
+                fs_wrapper::create_dir_all(
+                    &RclonePath::Local(
+                        format!(
+                            "{}/{}",
+                            temp_directory.clone(),
+                            output_directory
+                        )
+                    )
+                )?;
+            }
+        }
+    }
+
+    if args.dry_run {
+        eprintln!("Skipping creation of output directory as --dry-run is set");
+    } else {
+        println!("Creating output directory");
+        fs_wrapper::create_dir_all(&config.output_directory)?;
+    }
+
+    for output_directory in output_directories {
+        if output_directory != "" {
+            if args.dry_run {
+                eprintln!("Skipping creation of output directory {} as --dry-run is set", output_directory);
+            } else {
+                println!("Creating output directory {}", output_directory);
+                fs_wrapper::create_dir_all(
+                    &config.output_directory.with_path(
+                        format!(
+                            "{}/{}",
+                            config.output_directory.clone().path_string(),
+                            output_directory
+                        )
+                    )
+                )?;
+            }
+        }
+    }
+
     // Process all files
 
     // Delete files
@@ -233,7 +312,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.dry_run {
             eprintln!("Skipping delete as --dry-run is set");
         } else {
-            fs::remove_file(Path::new(&config.output_directory).join(file_to_delete))?;
+            fs_wrapper::remove_file(
+                &config.output_directory.with_path(
+                    format!(
+                        "{}/{}",
+                        config.output_directory.clone().path_string(),
+                        file_to_delete
+                    )
+                )
+            )?;
         }
     }
 
@@ -243,9 +330,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.dry_run {
             eprintln!("Skipping rename as --dry-run is set");
         } else {
-            fs::rename(
-                Path::new(&config.output_directory).join(old_file_name),
-                Path::new(&config.output_directory).join(new_file_name),
+            fs_wrapper::rename(
+                &config.output_directory.with_path(
+                    format!(
+                        "{}/{}",
+                        config.output_directory.clone().path_string(),
+                        old_file_name
+                    )
+                ),
+                &config.output_directory.with_path(
+                    format!(
+                        "{}/{}",
+                        config.output_directory.clone().path_string(),
+                        new_file_name
+                    )
+                ),
             )?;
         }
     }
@@ -267,8 +366,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if args.dry_run {
                 eprintln!("Skipping encode as --dry-run is set");
             } else {
-                let input_file_path = Path::new(&config.input_directory).join(input_file_name);
-                let output_file_path = Path::new(&config.output_directory).join(output_file_name);
+                let input_file_path = if config.input_directory.is_remote() {
+                    println!("Copying source file to temp directory before encoding");
+                    fs_wrapper::copy(
+                        &config.input_directory.with_path(
+                            format!(
+                                "{}/{}",
+                                config.input_directory.clone().path_string(),
+                                input_file_name
+                            )
+                        ),
+                        &RclonePath::Local(
+                            format!(
+                                "{}/{}",
+                                temp_directory,
+                                input_file_name
+                            )
+                        ),
+                    )?;
+                    PathBuf::from(
+                        format!(
+                            "{}/{}",
+                            temp_directory,
+                            input_file_name
+                        )
+                    )
+                } else {
+                    Path::new(&config.input_directory.clone().path_string()).join(input_file_name.clone())
+                };
+                let output_file_path = if config.output_directory.is_remote() {
+                    PathBuf::from(
+                        format!(
+                            "{}/{}",
+                            temp_directory,
+                            output_file_name
+                        )
+                    )
+                } else {
+                    Path::new(&config.output_directory.clone().path_string()).join(output_file_name.clone())
+                };
                 let mut params = vec!["-i", input_file_path.to_str().unwrap()];
                 let mut config_params: Vec<&str> = (&config.ffmpeg_params).split(" ").collect();
                 params.append(&mut config_params);
@@ -284,17 +420,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Copying audio cover");
                     copy_pictures(input_file_path, output_file_path)?;
                 }
+                if config.input_directory.is_remote() {
+                    fs_wrapper::remove_file(
+                        &RclonePath::Local(
+                            format!(
+                                "{}/{}",
+                                temp_directory,
+                                input_file_name
+                            )
+                        )
+                    )?;
+                }
+                if config.output_directory.is_remote() {
+                    fs_wrapper::rename(
+                        &RclonePath::Local(
+                            format!(
+                                "{}/{}",
+                                temp_directory,
+                                output_file_name
+                            )
+                        ),
+                        &config.output_directory.with_path(
+                            format!(
+                                "{}/{}",
+                                config.output_directory.clone().path_string(),
+                                output_file_name
+                            )
+                        ),
+                    )?;
+                }
             }
         } else {
             println!("Copying {} to {}", input_file_name, output_file_name);
             if args.dry_run {
                 eprintln!("Skipping copy as --dry-run is set");
             } else {
-                fs::copy(
-                    Path::new(&config.input_directory).join(input_file_name),
-                    Path::new(&config.output_directory).join(output_file_name),
+                fs_wrapper::copy(
+                    &config.input_directory.with_path(
+                        format!(
+                            "{}/{}",
+                            config.input_directory.clone().path_string(),
+                            input_file_name
+                        )
+                    ),
+                    &config.output_directory.with_path(
+                        format!(
+                            "{}/{}",
+                            config.output_directory.clone().path_string(),
+                            output_file_name
+                        )
+                    ),
                 )?;
             }
+        }
+    }
+
+    // Remove empty directories
+    if args.dry_run {
+        eprintln!("Skipping removal of empty output and temp directories as --dry-run is set");
+    } else {
+        fs_wrapper::remove_empty_dirs(&config.output_directory)?;
+        if config.input_directory.is_remote() || config.output_directory.is_remote() {
+            fs_wrapper::remove_empty_dirs(
+                &RclonePath::Local(temp_directory)
+            )?;
         }
     }
 
@@ -337,10 +526,17 @@ fn create_output_file_name(input_file_name: String, config: &Config) -> String {
         .to_str()
         .unwrap()
         .to_string();
-    let mut new_file_name = input_file_name;
-    if config.extensions_to_encode.contains(&input_file_extension) {
-        new_file_name = format!("{}.{}", input_file_stem, &config.encoded_extension);
-    }
+    let input_file_folder = Path::new(&input_file_name)
+        .parent()
+        .unwrap_or(Path::new(""))
+        .to_str()
+        .unwrap()
+        .to_string();
+    let mut new_file_name = if config.extensions_to_encode.contains(&input_file_extension) {
+        format!("{}.{}", input_file_stem, &config.encoded_extension)
+    } else {
+        format!("{}.{}", input_file_stem, input_file_extension)
+    };
     if config.remove_round_brackets == Some(true) {
         lazy_static! {
             static ref REGEX_SPACE_FIRST: Regex = Regex::new(r" \(.*?\)").unwrap();
@@ -389,20 +585,12 @@ fn create_output_file_name(input_file_name: String, config: &Config) -> String {
         new_file_name = REGEX_SPACE_LAST.replace_all(&new_file_name, "").to_string();
         new_file_name = REGEX.replace_all(&new_file_name, "").to_string();
     }
+    if input_file_folder != "" {
+        new_file_name = format!(
+            "{}/{}",
+            input_file_folder,
+            new_file_name
+        );
+    }
     new_file_name
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct Config {
-    pub input_directory: String,
-    pub output_directory: String,
-    pub extensions_to_encode: Vec<String>,
-    pub encoded_extension: String,
-    pub copy_covers: Option<bool>,
-    pub ffmpeg_params: String,
-    pub remove_round_brackets: Option<bool>,
-    pub remove_square_brackets: Option<bool>,
-    pub remove_curly_brackets: Option<bool>,
-    pub remove_angle_brackets: Option<bool>,
 }
